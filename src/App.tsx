@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Circuit, ConsumerUnit, Point, PointType, Project, Room } from "./types";
 import {
   buttonStyle,
@@ -14,6 +14,10 @@ import { CircuitEditor } from "./components/CircuitEditor";
 import { PointCard } from "./components/PointCard";
 import { ScheduleView } from "./components/ScheduleView";
 import { exportEicPdf } from "./pdf/exportEicPdf";
+
+// ✅ Update these two:
+const APP_VERSION = "0.1.0-beta";
+const FEEDBACK_URL = "PASTE_YOUR_GOOGLE_FORM_OR_FORMSPREE_LINK_HERE";
 
 function makeDefaultCircuit(cuId: string, name: string, nominalVoltage_V: number): Circuit {
   return {
@@ -35,31 +39,39 @@ function makeDefaultCircuit(cuId: string, name: string, nominalVoltage_V: number
     voltDropLimit_percent: 5,
     nominalVoltage_V,
 
+    // Testing / cert data
     Zs_measured_ohm: 0,
 
+    // user-entered device regime / limits
     earthing: "TN",
     deviceType: "MCB",
     maxDisconnectionTime_s: 0,
 
-    maxZs_device_ohm: 0,
+    maxZs_device_ohm: 0, // ✅ user enters
 
+    // RCD test
     rcd_I_delta_n_mA: 30,
     rcd_1x_0deg_ms: 0,
     rcd_1x_180deg_ms: 0,
 
+    // IR
     ir_500v_MOhm: 0,
     ir_250v_MOhm: 0,
 
+    // Polarity
     polarityPass: true,
     polarityNotes: "",
 
+    // Origin readings (optional per circuit if you want to record)
     pfc_kA: 0,
     Ze_measured_ohm: 0,
 
+    // End-to-end continuity
     R1_e2e_ohm: 0,
     RN_e2e_ohm: 0,
     R2_e2e_ohm: 0,
 
+    // Notes
     notesText: "",
   };
 }
@@ -81,6 +93,7 @@ function makeInitialProject(): Project {
   return {
     id: uid(),
     name: "Project 1",
+
     nominalVoltage_V: 230,
     originZe_ohm: 0.35,
     pfc_kA: 0,
@@ -98,12 +111,53 @@ function makeInitialProject(): Project {
   };
 }
 
+// -----------------------------
+// ✅ Export / Import helpers
+// -----------------------------
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function isProjectLike(x: any): x is Project {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof x.id === "string" &&
+    typeof x.name === "string" &&
+    typeof x.nominalVoltage_V === "number" &&
+    typeof x.originZe_ohm === "number" &&
+    Array.isArray(x.consumerUnits) &&
+    Array.isArray(x.circuits) &&
+    Array.isArray(x.rooms) &&
+    Array.isArray(x.points)
+  );
+}
+
 export default function App() {
   const [view, setView] = useState<"design" | "schedule">("design");
   const [project, setProject] = useState<Project>(() => makeInitialProject());
+
+  // ✅ version/last updated display
+  const [lastSavedAt, setLastSavedAt] = useState<number>(() => Date.now());
+
+  // Update "last updated" whenever project changes (covers all setProject paths)
+  useEffect(() => {
+    setLastSavedAt(Date.now());
+  }, [project]);
+
   const [pointsOpen, setPointsOpen] = useState(true);
 
-  const selectedCu = project.consumerUnits.find((c) => c.id === project.selectedCuId) ?? project.consumerUnits[0];
+  const selectedCu =
+    project.consumerUnits.find((c) => c.id === project.selectedCuId) ?? project.consumerUnits[0];
+
   const circuitsInCu = project.circuits.filter((c) => c.cuId === selectedCu.id);
 
   const selectedCircuit =
@@ -111,7 +165,8 @@ export default function App() {
       ? project.circuits.find((c) => c.id === project.selectedCircuitId) ?? circuitsInCu[0]
       : circuitsInCu[0];
 
-  const selectedRoom = project.rooms.find((r) => r.id === project.selectedRoomId) ?? project.rooms[0];
+  const selectedRoom =
+    project.rooms.find((r) => r.id === project.selectedRoomId) ?? project.rooms[0];
 
   const selectedCircuitCalc = useMemo(() => {
     if (!selectedCircuit) return null;
@@ -130,6 +185,24 @@ export default function App() {
       ...prev,
       circuits: prev.circuits.map((c) => (c.id === circuitId ? { ...c, ...patch } : c)),
     }));
+  }
+
+  function importProjectFromFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!isProjectLike(parsed)) {
+          alert("That file doesn't look like a valid project export.");
+          return;
+        }
+        setProject(parsed);
+        alert("Project imported ✅");
+      } catch {
+        alert("Could not read that JSON file.");
+      }
+    };
+    reader.readAsText(file);
   }
 
   function addCu() {
@@ -184,7 +257,9 @@ export default function App() {
     setProject((prev) => ({
       ...prev,
       circuits: remaining,
-      points: prev.points.map((p) => (p.circuitId === cid ? { ...p, circuitId: fallback ?? p.circuitId } : p)),
+      points: prev.points.map((p) =>
+        p.circuitId === cid ? { ...p, circuitId: fallback ?? p.circuitId } : p
+      ),
       selectedCircuitId: fallback,
     }));
   }
@@ -217,7 +292,15 @@ export default function App() {
   return (
     <div style={pageStyle()}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "baseline",
+        }}
+      >
         <div>
           <h1 style={{ margin: "6px 0 2px", fontSize: 34, letterSpacing: -0.5 }}>
             Electrical Installation Design Assistant
@@ -228,12 +311,64 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={() => setView("design")} style={buttonStyle({ variant: "secondary", active: view === "design" })}>
+          <button
+            onClick={() => setView("design")}
+            style={buttonStyle({ variant: "secondary", active: view === "design" })}
+          >
             Design view
           </button>
-          <button onClick={() => setView("schedule")} style={buttonStyle({ variant: "secondary", active: view === "schedule" })}>
+
+          <button
+            onClick={() => setView("schedule")}
+            style={buttonStyle({ variant: "secondary", active: view === "schedule" })}
+          >
             EIC / Schedule
           </button>
+
+          {/* ✅ Feedback link */}
+          <a
+            href={FEEDBACK_URL}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: "none" }}
+          >
+            <button style={buttonStyle({ variant: "ghost" })} type="button">
+              Give feedback
+            </button>
+          </a>
+
+          {/* ✅ Export project JSON */}
+          <button
+            onClick={() => {
+              const safeName =
+                project.name.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 40) || "project";
+              downloadJson(`${safeName}.json`, project);
+            }}
+            style={buttonStyle({ variant: "ghost" })}
+          >
+            Export project
+          </button>
+
+          {/* ✅ Import project JSON */}
+          <label style={{ display: "inline-block" }}>
+            <input
+              type="file"
+              accept="application/json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) importProjectFromFile(file);
+                e.currentTarget.value = "";
+              }}
+            />
+            <span>
+              <button style={buttonStyle({ variant: "ghost" })} type="button">
+                Import project
+              </button>
+            </span>
+          </label>
+
+          {/* PDF */}
           <button onClick={() => exportEicPdf(project)} style={buttonStyle({ variant: "primary" })}>
             Export PDF
           </button>
@@ -241,31 +376,65 @@ export default function App() {
       </div>
 
       {/* Top cards */}
-      <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(360px, 1fr) minmax(360px, 1fr)", gap: 14 }}>
+      <div
+        style={{
+          marginTop: 16,
+          display: "grid",
+          gridTemplateColumns: "minmax(360px, 1fr) minmax(360px, 1fr)",
+          gap: 14,
+        }}
+      >
         <div style={cardStyle()}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Project</div>
           <label style={{ display: "grid", gap: 6, fontSize: 12 }}>
             <span>Project name</span>
-            <input value={project.name} onChange={(e) => updateProject({ name: e.target.value })} style={inputStyle()} />
+            <input
+              value={project.name}
+              onChange={(e) => updateProject({ name: e.target.value })}
+              style={inputStyle()}
+            />
           </label>
         </div>
 
         <div style={cardStyle()}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Supply / Origin</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(200px, 1fr))", gap: 10 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(200px, 1fr))",
+              gap: 10,
+            }}
+          >
             <label style={{ display: "grid", gap: 6, fontSize: 12 }}>
               <span>Nominal voltage Uo (V)</span>
-              <input type="number" value={project.nominalVoltage_V} onChange={(e) => updateProject({ nominalVoltage_V: Number(e.target.value) })} style={inputStyle()} />
+              <input
+                type="number"
+                value={project.nominalVoltage_V}
+                onChange={(e) => updateProject({ nominalVoltage_V: Number(e.target.value) })}
+                style={inputStyle()}
+              />
             </label>
 
             <label style={{ display: "grid", gap: 6, fontSize: 12 }}>
               <span>Ze at origin (Ω)</span>
-              <input type="number" step="0.001" value={project.originZe_ohm} onChange={(e) => updateProject({ originZe_ohm: Number(e.target.value) })} style={inputStyle()} />
+              <input
+                type="number"
+                step="0.001"
+                value={project.originZe_ohm}
+                onChange={(e) => updateProject({ originZe_ohm: Number(e.target.value) })}
+                style={inputStyle()}
+              />
             </label>
 
             <label style={{ display: "grid", gap: 6, fontSize: 12 }}>
               <span>PFC at origin (kA)</span>
-              <input type="number" step="0.01" value={project.pfc_kA} onChange={(e) => updateProject({ pfc_kA: Number(e.target.value) })} style={inputStyle()} />
+              <input
+                type="number"
+                step="0.01"
+                value={project.pfc_kA}
+                onChange={(e) => updateProject({ pfc_kA: Number(e.target.value) })}
+                style={inputStyle()}
+              />
             </label>
           </div>
         </div>
@@ -280,7 +449,16 @@ export default function App() {
             <thead>
               <tr>
                 {["CU", "Circuits", "Pass", "Fail", "N/A", "Overall"].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px", background: ui.colors.surface }}>
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: "left",
+                      borderBottom: `1px solid ${ui.colors.border}`,
+                      padding: "10px 8px",
+                      background: ui.colors.surface,
+                      color: ui.colors.text,
+                    }}
+                  >
                     {h}
                   </th>
                 ))}
@@ -289,12 +467,28 @@ export default function App() {
             <tbody>
               {cuSummary.map((s) => (
                 <tr key={s.cuId}>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>{s.cuName}</td>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>{s.totalCircuits}</td>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>{s.passCount}</td>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>{s.failCount}</td>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>{s.naCount}</td>
-                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px", fontWeight: 900 }}>
+                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>
+                    {s.cuName}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>
+                    {s.totalCircuits}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>
+                    {s.passCount}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>
+                    {s.failCount}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${ui.colors.border}`, padding: "10px 8px" }}>
+                    {s.naCount}
+                  </td>
+                  <td
+                    style={{
+                      borderBottom: `1px solid ${ui.colors.border}`,
+                      padding: "10px 8px",
+                      fontWeight: 900,
+                    }}
+                  >
                     {s.overall.toUpperCase()}
                   </td>
                 </tr>
@@ -310,7 +504,15 @@ export default function App() {
           <ScheduleView project={project} />
         </div>
       ) : (
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(340px, 380px) 1fr", gap: 18, alignItems: "start" }}>
+        <div
+          style={{
+            marginTop: 16,
+            display: "grid",
+            gridTemplateColumns: "minmax(340px, 380px) 1fr",
+            gap: 18,
+            alignItems: "start",
+          }}
+        >
           {/* Sidebar */}
           <div style={cardStyle()}>
             <div style={{ fontWeight: 900, marginBottom: 10 }}>Consumer Units</div>
@@ -334,7 +536,11 @@ export default function App() {
               <button
                 onClick={deleteSelectedCu}
                 disabled={project.consumerUnits.length <= 1}
-                style={buttonStyle({ variant: "danger", fullWidth: true, disabled: project.consumerUnits.length <= 1 })}
+                style={buttonStyle({
+                  variant: "danger",
+                  fullWidth: true,
+                  disabled: project.consumerUnits.length <= 1,
+                })}
               >
                 Delete CU
               </button>
@@ -350,7 +556,10 @@ export default function App() {
                     textAlign: "left",
                     padding: "10px",
                     borderRadius: 12,
-                    border: c.id === selectedCircuit?.id ? "2px solid #111" : `1px solid ${ui.colors.border}`,
+                    border:
+                      c.id === selectedCircuit?.id
+                        ? "2px solid #111"
+                        : `1px solid ${ui.colors.border}`,
                     background: c.id === selectedCircuit?.id ? ui.colors.surface2 : "#fff",
                     cursor: "pointer",
                     color: ui.colors.text,
@@ -358,7 +567,8 @@ export default function App() {
                 >
                   <div style={{ fontWeight: 900 }}>{c.name}</div>
                   <div style={{ fontSize: 12, color: ui.colors.muted }}>
-                    {c.breakerCurve}{c.In_A} • Iz {c.Iz_A}A
+                    {c.breakerCurve}
+                    {c.In_A} • Iz {c.Iz_A}A
                   </div>
                 </button>
               ))}
@@ -370,7 +580,11 @@ export default function App() {
               <button
                 onClick={removeSelectedCircuit}
                 disabled={project.circuits.length <= 1}
-                style={buttonStyle({ variant: "danger", fullWidth: true, disabled: project.circuits.length <= 1 })}
+                style={buttonStyle({
+                  variant: "danger",
+                  fullWidth: true,
+                  disabled: project.circuits.length <= 1,
+                })}
               >
                 Remove selected circuit
               </button>
@@ -412,13 +626,29 @@ export default function App() {
               <div>No circuit selected.</div>
             )}
 
-            {/* Rooms & Points (collapsible, less cramped) */}
-            <div style={{ marginTop: 18, borderTop: `1px solid ${ui.colors.border}`, paddingTop: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {/* Rooms & Points */}
+            <div
+              style={{
+                marginTop: 18,
+                borderTop: `1px solid ${ui.colors.border}`,
+                paddingTop: 14,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
                 <div style={{ fontWeight: 900 }}>Rooms & Points</div>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, color: ui.colors.muted }}>Presets apply default W per point type.</span>
+                  <span style={{ fontSize: 12, color: ui.colors.muted }}>
+                    Presets apply default W per point type.
+                  </span>
                   <button
                     type="button"
                     onClick={() => setPointsOpen((v) => !v)}
@@ -432,8 +662,16 @@ export default function App() {
               {pointsOpen && (
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                   {pointsInRoom.length === 0 ? (
-                    <div style={{ padding: 12, border: `1px dashed ${ui.colors.border}`, borderRadius: 12, color: ui.colors.muted }}>
-                      No points in this room yet. Click <strong style={{ color: ui.colors.text }}>+ Add point</strong>.
+                    <div
+                      style={{
+                        padding: 12,
+                        border: `1px dashed ${ui.colors.border}`,
+                        borderRadius: 12,
+                        color: ui.colors.muted,
+                      }}
+                    >
+                      No points in this room yet. Click{" "}
+                      <strong style={{ color: ui.colors.text }}>+ Add point</strong>.
                     </div>
                   ) : (
                     pointsInRoom.map((p) => (
@@ -466,7 +704,7 @@ export default function App() {
                   )}
 
                   <div style={{ fontSize: 12, color: ui.colors.muted }}>
-                    Tip: Assign points to circuits — Ib updates automatically in the calculations.
+                    Tip: Assign points to circuits — Ib updates automatically.
                   </div>
                 </div>
               )}
@@ -474,6 +712,26 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ✅ Beta notice footer */}
+      <div
+        style={{
+          marginTop: 18,
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: `1px solid ${ui.colors.border}`,
+          background: ui.colors.surface,
+          color: ui.colors.text,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}
+      >
+        <strong>Draft / beta tool</strong> – user-entered values only. Not a substitute for BS 7671.
+        <div style={{ marginTop: 8, fontSize: 12, color: ui.colors.muted }}>
+          Version: <strong style={{ color: ui.colors.text }}>{APP_VERSION}</strong> • Last update:{" "}
+          <strong style={{ color: ui.colors.text }}>{new Date(lastSavedAt).toLocaleString()}</strong>
+        </div>
+      </div>
     </div>
   );
 }
