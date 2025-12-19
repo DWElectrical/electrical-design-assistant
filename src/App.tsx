@@ -17,7 +17,7 @@ import { exportEicPdf } from "./pdf/exportEicPdf";
 
 // ✅ Update these two:
 const APP_VERSION = "0.1.0-beta";
-const FEEDBACK_URL = "PASTE_YOUR_GOOGLE_FORM_OR_FORMSPREE_LINK_HERE";
+const FEEDBACK_URL = "https://forms.gle/AzNXS78yS8tZCQmt5";
 
 function makeDefaultCircuit(cuId: string, name: string, nominalVoltage_V: number): Circuit {
   return {
