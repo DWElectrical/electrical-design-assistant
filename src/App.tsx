@@ -404,7 +404,6 @@ export default function App() {
           <div style={cardStyle()}>
             {selectedCircuit && selectedCircuitCalc ? (
               <CircuitEditor
-                project={project}
                 circuit={selectedCircuit}
                 calc={selectedCircuitCalc}
                 onChange={(patch) => updateCircuit(selectedCircuit.id, patch)}

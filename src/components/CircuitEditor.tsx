@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Circuit, CircuitCalc, Project } from "../types";
+import type { Circuit, CircuitCalc } from "../types";
 import {
   badgeStyle,
   buttonStyle,
@@ -13,12 +13,10 @@ import {
 import { TestPanel } from "./TestPanel";
 
 export function CircuitEditor({
-  project,
   circuit,
   calc,
   onChange,
 }: {
-  project: Project;
   circuit: Circuit;
   calc: CircuitCalc;
   onChange: (patch: Partial<Circuit>) => void;
